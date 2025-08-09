@@ -1,5 +1,0 @@
-"""
-rePercussion backend package.
-"""
-
-

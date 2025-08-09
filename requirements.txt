@@ -1,10 +1,5 @@
-fastapi
-uvicorn
+Flask
 spotipy
-librosa
-sentence-transformers
-faiss-cpu
-streamlit
 python-dotenv
 requests
 gunicorn
