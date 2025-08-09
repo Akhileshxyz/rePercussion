@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block content %}
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if profile %}
+    <div class="card">
+      <h2>Welcome, {{ profile.display_name or profile.id }}!</h2>
+      <p>Email: {{ profile.email or 'N/A' }}</p>
+      <a class="btn" href="{{ url_for('logout') }}">Logout</a>
+    </div>
+    <section class="grid">
+      <div class="tile">Liked Songs (coming soon)</div>
+      <div class="tile">Share a Playlist (coming soon)</div>
+      <div class="tile">Musical Sense (coming soon)</div>
+      <div class="tile">Recommendations (coming soon)</div>
+    </section>
+  {% else %}
+    <a class="btn" href="{{ url_for('login') }}">Login with Spotify</a>
+  {% endif %}
+{% endblock %}
+
+
