@@ -1,7 +1,0 @@
-Flask
-spotipy
-python-dotenv
-requests
-gunicorn
-
-
