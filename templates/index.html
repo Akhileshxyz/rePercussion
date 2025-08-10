@@ -11,10 +11,10 @@
       <a class="btn" href="{{ url_for('logout') }}">Logout</a>
     </div>
     <section class="grid">
-      <div class="tile">Liked Songs (coming soon)</div>
-      <div class="tile">Share a Playlist (coming soon)</div>
-      <div class="tile">Musical Sense (coming soon)</div>
-      <div class="tile">Recommendations (coming soon)</div>
+      <a class="tile link" href="{{ url_for('liked_songs') }}">Liked Songs</a>
+      <a class="tile link" href="{{ url_for('playlist') }}">Share a Playlist</a>
+      <a class="tile link" href="{{ url_for('musical_sense') }}">Musical Sense</a>
+      <a class="tile link" href="{{ url_for('recommendations') }}">Recommendations</a>
     </section>
   {% else %}
     <a class="btn" href="{{ url_for('login') }}">Login with Spotify</a>

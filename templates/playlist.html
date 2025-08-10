@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Share a Playlist</h2>
+  <form method="post" class="form">
+    <input type="text" name="playlist" placeholder="Paste Spotify playlist URL or ID" required />
+    <button class="btn" type="submit">Analyze</button>
+  </form>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if playlist %}
+    <div class="card">
+      <h3>{{ playlist.name }}</h3>
+      <p>Owner: {{ playlist.owner }} | Tracks: {{ playlist.tracks_total }}</p>
+      {% if playlist.images and playlist.images[0] %}
+        <img class="cover" src="{{ playlist.images[0].url }}" alt="cover" />
+      {% endif %}
+      {% if playlist.external_url %}
+        <p><a class="btn" href="{{ playlist.external_url }}" target="_blank">Open in Spotify</a></p>
+      {% endif %}
+    </div>
+    {% if summary %}
+      <h3>Audio Feature Averages</h3>
+      <div class="grid two">
+        {% for k, v in summary.items() %}
+          <div class="tile">
+            <div class="title">{{ k|capitalize }}</div>
+            <div class="value">
+              {% if ratings and ratings[k] %}
+                {% if v is not none %}{{ v }} {% endif %}<span class="badge">{{ ratings[k] }}</span>
+              {% else %}
+                <span class="badge">Neutral</span>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if profile %}
+      <div class="card">
+        <p><strong>Favorite Genre:</strong> {{ profile.favorite_genre or 'N/A' }}</p>
+        <p><strong>Primary Language:</strong> {{ profile.primary_language or 'N/A' }}</p>
+        <p><strong>Common Instruments:</strong> {{ (profile.common_instruments or []) | join(', ') }}</p>
+        <p><strong>Personality:</strong> {{ profile.llm_summary or profile.musical_sense }}</p>
+      </div>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+

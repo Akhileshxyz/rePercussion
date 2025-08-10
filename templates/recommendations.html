@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Recommendations</h2>
+  <div class="list">
+    {% for t in tracks %}
+      <div class="row">
+        {% if t.cover %}<img class="cover" src="{{ t.cover }}" alt="cover" />{% endif %}
+        <div class="meta">
+          <div class="title">{{ t.name }}</div>
+          <div class="sub">{{ t.artists }} — {{ t.album }}</div>
+          {% if t.preview_url %}
+            <audio controls src="{{ t.preview_url }}"></audio>
+          {% endif %}
+          {% if t.external_url %}
+            <p><a class="btn" href="{{ t.external_url }}" target="_blank">Open in Spotify</a></p>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endblock %}
+
+

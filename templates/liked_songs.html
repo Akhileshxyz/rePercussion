@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Liked Songs</h2>
+  <div class="list">
+    {% for t in tracks %}
+      <div class="row">
+        {% if t.cover %}<img class="cover" src="{{ t.cover }}" alt="cover" />{% endif %}
+        <div class="meta">
+          <div class="title">{{ t.name }}</div>
+          <div class="sub">{{ t.artists }} — {{ t.album }}</div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="pager">
+    {% if has_prev %}<a class="btn" href="{{ url_for('liked_songs', page=page-1) }}">Prev</a>{% endif %}
+    {% if has_next %}<a class="btn" href="{{ url_for('liked_songs', page=page+1) }}">Next</a>{% endif %}
+  </div>
+{% endblock %}
+
+

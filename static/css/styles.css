@@ -4,5 +4,13 @@ header { margin-bottom: 1rem; }
 .error { background: #ffe6e6; color: #a00; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; }
 .card { background: #f7f7f7; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
-.tile { background: #fafafa; border: 1px solid #eee; padding: 1rem; border-radius: 8px; text-align: center; }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.tile { background: #fafafa; border: 1px solid #eee; padding: 1rem; border-radius: 8px; text-align: center; text-decoration: none; color: inherit; }
+.tile.link:hover { background: #f0fdf4; border-color: #bbf7d0; }
+.list .row { display: flex; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+.cover { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+.meta .title { font-weight: 600; }
+.meta .sub { font-size: 0.9rem; color: #555; }
+.form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.form input { flex: 1; padding: 0.5rem; border: 1px solid #ddd; border-radius: 6px; }
 
