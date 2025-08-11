@@ -216,33 +216,55 @@ def create_app() -> Flask:
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+        # Extract librosa features
+        audio_summary = analysis.get('audio_summary', {})
+        librosa_tempo = audio_summary.get('librosa_tempo', 'not available')
+        spectral_centroid_mean = audio_summary.get('spectral_centroid_mean', 'not available')
+        spectral_bandwidth_mean = audio_summary.get('spectral_bandwidth_mean', 'not available')
+        spectral_rolloff_mean = audio_summary.get('spectral_rolloff_mean', 'not available')
+        rms_mean = audio_summary.get('rms_mean', 'not available')
+        zero_crossing_rate_mean = audio_summary.get('zero_crossing_rate_mean', 'not available')
+        dominant_pitch_class = audio_summary.get('dominant_pitch_class', 'not available')
+        
+        # Prepare librosa feature explanations
+        librosa_explanations = f"""
+        Advanced Audio Features (from librosa analysis):
+        - Librosa Tempo: {librosa_tempo} BPM - The estimated beats per minute using librosa's beat tracking algorithm
+        - Spectral Centroid Mean: {spectral_centroid_mean} - Represents the "center of mass" of the spectrum; higher values indicate brighter sound
+        - Spectral Bandwidth Mean: {spectral_bandwidth_mean} - Indicates the width of the spectrum; higher values suggest more range in frequencies
+        - Spectral Rolloff Mean: {spectral_rolloff_mean} - Frequency below which most of the energy is concentrated; indicates tonal range
+        - RMS Mean: {rms_mean} - Root Mean Square energy; indicates overall loudness and dynamic range
+        - Zero Crossing Rate Mean: {zero_crossing_rate_mean} - Rate of sign changes; higher values suggest more noise/percussion
+        - Dominant Pitch Class: {dominant_pitch_class} - The most common pitch class (musical note) in the audio
+        """
+
         prompt = f"""
         Analyze the following music taste profile and generate a fun, exciting, and personalized summary for a music lover.
         The user's favorite genre is {analysis.get('favorite_genre', 'not available')}.
         Their top artist is {analysis.get('top_artist', 'not available')}.
         They primarily listen to music in {analysis.get('primary_language', 'not available')}.
+        
         Their music has the following characteristics:
-        - Danceability: {analysis.get('audio_summary', {}).get('danceability', 'not available')}
-        - Energy: {analysis.get('audio_summary', {}).get('energy', 'not available')}
-        - Valence (Positivity): {analysis.get('audio_summary', {}).get('valence', 'not available')}
-        - Tempo: {analysis.get('audio_summary', {}).get('tempo', 'not available')} BPM
-        - Acousticness: {analysis.get('audio_summary', {}).get('acousticness', 'not available')}
-        - Instrumentalness: {analysis.get('audio_summary', {}).get('instrumentalness', 'not available')}
-        - Librosa Tempo: {analysis.get('audio_summary', {}).get('librosa_tempo', 'not available')}
-        - Spectral Centroid Mean: {analysis.get('audio_summary', {}).get('spectral_centroid_mean', 'not available')}
-        - Dominant Pitch Class: {analysis.get('audio_summary', {}).get('dominant_pitch_class', 'not available')}
+        - Danceability: {audio_summary.get('danceability', 'not available')}
+        - Energy: {audio_summary.get('energy', 'not available')}
+        - Valence (Positivity): {audio_summary.get('valence', 'not available')}
+        - Tempo: {audio_summary.get('tempo', 'not available')} BPM
+        - Acousticness: {audio_summary.get('acousticness', 'not available')}
+        - Instrumentalness: {audio_summary.get('instrumentalness', 'not available')}
+        
+        {librosa_explanations}
 
-        Give them a cool title for their musical taste and a paragraph or two that sounds exciting and insightful.
+        Give them a cool title for their musical taste and a paragraph or two that sounds exciting and insightful. Include specific insights about what the advanced audio features reveal about their music preferences in terms of production style and sonic qualities.
         """
 
         try:
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a witty and insightful music analyst."},
+                    {"role": "system", "content": "You are a witty and insightful music expert who can analyze both standard and advanced audio features. You understand signal processing concepts and can translate technical measurements into meaningful musical insights. Your analysis should be fun, personalized, and technically accurate."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=250,
+                max_tokens=400,
                 temperature=0.7,
             )
             return response.choices[0].message.content
@@ -1018,7 +1040,7 @@ def _describe_personality(ratings: Dict[str, str | None], summary: Dict[str, Any
 
 
 def generate_llm_summary(ratings: Dict[str, Any], audio_summary: Dict[str, Any], favorite_genre: str | None) -> str:
-    """Call OpenAI (or compatible) LLM to craft a personalized summary using our DSP analysis.
+    """Call OpenAI (or compatible) LLM to craft a personalized summary using our DSP analysis and librosa features.
 
     Requires OPENAI_API_KEY in environment. Falls back to deterministic description if unavailable.
     """
@@ -1028,29 +1050,67 @@ def generate_llm_summary(ratings: Dict[str, Any], audio_summary: Dict[str, Any],
 
     try:
         client = OpenAI(api_key=api_key)
+        
+        # Extract librosa-specific features
+        librosa_features = {k: audio_summary.get(k) for k in [
+            "librosa_tempo", "spectral_centroid_mean", "rms_mean", "zcr_mean", 
+            "flatness_mean", "rolloff_mean", "onset_mean", "dominant_pitch_class",
+            "spectral_bandwidth_mean", "spectral_contrast_mean", "chroma_stft_mean",
+            "mfcc_mean", "harmonic_mean", "percussive_mean"
+        ] if audio_summary.get(k) is not None}
+        
+        # Prepare feature explanations with more detailed descriptions
+        feature_explanations = {
+            "librosa_tempo": "Beats per minute detected through signal processing",
+            "spectral_centroid_mean": "Average frequency distribution center (higher = brighter sound)",
+            "rms_mean": "Root mean square energy (loudness and dynamic range)",
+            "zcr_mean": "Zero crossing rate (higher = more percussive/noisy, lower = more tonal)",
+            "flatness_mean": "Spectral flatness (higher = more noise-like vs. tonal, indicates texture)",
+            "rolloff_mean": "Frequency below which 85% of energy is contained (indicates brightness/darkness)",
+            "onset_mean": "Strength of note onsets/attacks (indicates rhythmic clarity and articulation)",
+            "dominant_pitch_class": "Most common musical note/key (indicates tonal center)",
+            "spectral_bandwidth_mean": "Width of the spectrum (indicates frequency range and richness)",
+            "spectral_contrast_mean": "Contrast between peaks and valleys in spectrum (indicates clarity vs. muddiness)",
+            "chroma_stft_mean": "Distribution of energy across pitch classes (indicates harmonic content)",
+            "mfcc_mean": "Mel-frequency cepstral coefficients (indicates timbre characteristics)",
+            "harmonic_mean": "Energy in harmonic components (indicates melodic content)",
+            "percussive_mean": "Energy in percussive components (indicates rhythmic emphasis)"
+        }
 
-        # Build a compact prompt with ratings and key DSP stats only
+        # Build a comprehensive prompt with ratings and detailed DSP stats
         lines = [
-            "You are a concise, vivid music curator.",
-            "Write a 2-3 sentence personalized description of the listener's taste.",
-            "Avoid generic platitudes; reference concrete traits.",
+            "You are a concise, vivid music curator with expertise in audio signal processing and music production.",
+            "Write a 2-3 sentence personalized description of the listener's taste that includes insights about production style and sonic qualities.",
+            "Avoid generic platitudes; reference concrete traits, production characteristics, and sonic textures based on the advanced audio features.",
         ]
         if favorite_genre:
             lines.append(f"Favorite genre hint: {favorite_genre}.")
         lines.append(f"Ratings: {ratings}.")
-        keep = {k: audio_summary.get(k) for k in ("tempo","spectral_centroid_mean","librosa_tempo","dominant_pitch_class") if audio_summary.get(k) is not None}
-        lines.append(f"DSP: {keep}.")
+        
+        # Include standard audio features
+        standard_features = {k: audio_summary.get(k) for k in ["danceability", "energy", "valence", "tempo", "acousticness", "instrumentalness"] if audio_summary.get(k) is not None}
+        lines.append(f"Standard Features: {standard_features}.")
+        
+        # Include librosa features with detailed explanations
+        if librosa_features:
+            librosa_desc = "Advanced Audio Features (use these to infer production style and sonic qualities):\n"
+            for k, v in librosa_features.items():
+                if k in feature_explanations:
+                    librosa_desc += f"- {k}: {v} ({feature_explanations[k]})\n"
+            lines.append(librosa_desc)
+        
+        lines.append("Use both standard and advanced features to create a detailed, personalized description that specifically addresses production style (e.g., warm/bright, clean/distorted, sparse/dense) and sonic qualities (e.g., textural elements, frequency balance, dynamic range).")
         lines.append("Return only the description.")
         prompt = "\n".join(lines)
 
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
-                {"role": "system", "content": "You craft engaging yet precise music taste summaries."},
+                {"role": "system", "content": "You are a music expert and audio engineer who crafts engaging and precise summaries of music taste. You have deep knowledge of audio signal processing, music production techniques, and sonic characteristics. You can analyze both standard streaming metrics and advanced DSP features, translating technical measurements into meaningful musical insights about production style and sonic qualities. Focus on what the advanced features reveal about timbre, texture, dynamics, and frequency content that standard features miss."}, 
                 {"role": "user", "content": prompt},
             ],
             temperature=0.6,
-            max_tokens=120,
+            max_tokens=250,
         )
         return resp.choices[0].message.content.strip()
     except Exception:
@@ -1066,26 +1126,84 @@ def generate_llm_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     audio_summary = payload.get("audio_summary") or {}
     genres = payload.get("genres") or []
     artists = payload.get("artists") or []
-    top_tracks_text = "; ".join([f"{t.get('name','')} – {', '.join(t.get('artists',[]))}" for t in tracks[:20]])
+    formatted_tracks = []
+    for t in tracks[:20]:
+        artist_names = ', '.join(a.get('name', '') for a in t.get('artists', []))
+        formatted_tracks.append(f"{t.get('name','')} – {artist_names}")
+    top_tracks_text = "; ".join(formatted_tracks)
+    
+    # Extract librosa-specific audio features for enhanced analysis
+    librosa_features = {k: v for k, v in audio_summary.items() if k in [
+        "librosa_tempo", "spectral_centroid_mean", "rms_mean", "zcr_mean", 
+        "flatness_mean", "rolloff_mean", "onset_mean", "dominant_pitch_class",
+        "spectral_bandwidth_mean", "spectral_contrast_mean", "chroma_stft_mean",
+        "mfcc_mean", "harmonic_mean", "percussive_mean"
+    ] and v is not None}
+    
+    # Prepare feature explanations for the prompt with more detailed descriptions
+    feature_explanations = {
+        "librosa_tempo": "Beats per minute detected through signal processing",
+        "spectral_centroid_mean": "Average frequency distribution center (higher = brighter sound)",
+        "rms_mean": "Root mean square energy (loudness and dynamic range)",
+        "zcr_mean": "Zero crossing rate (higher = more percussive/noisy, lower = more tonal)",
+        "flatness_mean": "Spectral flatness (higher = more noise-like vs. tonal, indicates texture)",
+        "rolloff_mean": "Frequency below which 85% of energy is contained (indicates brightness/darkness)",
+        "onset_mean": "Strength of note onsets/attacks (indicates rhythmic clarity and articulation)",
+        "dominant_pitch_class": "Most common musical note/key (indicates tonal center)",
+        "spectral_bandwidth_mean": "Width of the spectrum (indicates frequency range and richness)",
+        "spectral_contrast_mean": "Contrast between peaks and valleys in spectrum (indicates clarity vs. muddiness)",
+        "chroma_stft_mean": "Distribution of energy across pitch classes (indicates harmonic content)",
+        "mfcc_mean": "Mel-frequency cepstral coefficients (indicates timbre characteristics)",
+        "harmonic_mean": "Energy in harmonic components (indicates melodic content)",
+        "percussive_mean": "Energy in percussive components (indicates rhythmic emphasis)"
+    }
+    
+    # Create detailed feature descriptions for the prompt
+    librosa_descriptions = []
+    for feature, value in librosa_features.items():
+        if feature in feature_explanations:
+            librosa_descriptions.append(f"- {feature}: {value} ({feature_explanations[feature]})")
+    
+    librosa_section = "\n".join(librosa_descriptions) if librosa_descriptions else "No advanced audio features available"
     prompt = (
-        "Analyze this music data and provide insights about the user's musical preferences:\n\n"
-        f"User's Top Tracks: [{top_tracks_text}]\n"
-        f"Audio Features: {json.dumps({k: audio_summary.get(k) for k in ['energy','danceability','valence','acousticness','tempo']}, ensure_ascii=False)}\n"
+        "As a music expert and audio engineer, analyze this user's musical preferences with particular attention to the advanced audio features:\n\n"
+        f"User's Top Tracks: [{top_tracks_text}]\n\n"
+        f"Basic Audio Features:\n{json.dumps({k: audio_summary.get(k) for k in ['energy','danceability','valence','acousticness','tempo']}, indent=2, ensure_ascii=False)}\n\n"
+        f"Advanced Audio Features (Librosa Analysis):\n{librosa_section}\n\n"
         f"Top Genres: {genres}\n"
         f"Top Artists: {artists}\n\n"
+        "The advanced audio features reveal nuances about timbre, rhythm, and musical structure "
+        "that basic features might miss. Use these to identify specific instrument characteristics, "
+        "production styles, and sonic qualities.\n\n"
+        "Pay special attention to:\n"
+        "- Spectral features (centroid, bandwidth, rolloff) for brightness/darkness and frequency balance\n"
+        "- Dynamic features (RMS, onset strength) for compression, punch, and articulation\n"
+        "- Textural features (flatness, ZCR) for tonal vs. noise content and production texture\n"
+        "- Harmonic features (chroma, pitch class) for key relationships and harmonic complexity\n\n"
         "Please provide analysis in this exact JSON format:\n"
-        "{\n  \"favoriteGenre\": \"Primary genre with explanation\",\n  \"topArtist\": \"Most significant artist with reason\",\n  \"primaryLanguage\": \"Detected language\",\n  \"commonInstruments\": [\"instrument1\", \"instrument2\", \"instrument3\"],\n  \"musicalSense\": \"3-4 sentence personality description of their musical taste\",\n  \"recommendations\": {\n    \"reason\": \"Why these recommendations fit\",\n    \"searchTerms\": [\"term1\", \"term2\", \"term3\"]\n  }\n}\n\n"
-        "Be insightful and personal in the analysis."
+        "{\n"
+        "  \"favoriteGenre\": \"Primary genre with explanation\",\n"
+        "  \"topArtist\": \"Most significant artist with reason\",\n"
+        "  \"primaryLanguage\": \"Detected language\",\n"
+        "  \"commonInstruments\": [\"instrument1\", \"instrument2\", \"instrument3\"],\n"
+        "  \"musicalSense\": \"3-4 sentence personality description of their musical taste\",\n"
+        "  \"advancedInsights\": \"2-3 detailed sentences about what the librosa features reveal about production style (e.g., warm/bright, clean/distorted, sparse/dense) and sonic qualities (e.g., textural elements, frequency balance, dynamic range)\",\n"
+        "  \"recommendations\": {\n"
+        "    \"reason\": \"Why these recommendations fit\",\n"
+        "    \"searchTerms\": [\"term1\", \"term2\", \"term3\"]\n"
+        "  }\n"
+        "}\n\n"
+        "Be insightful and personal in the analysis, focusing on what the advanced audio features reveal about production techniques and sonic characteristics that define the user's music taste."
     )
     try:
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
-                {"role": "system", "content": "You are a JSON-only music analyst. Always return valid JSON and nothing else."},
+                {"role": "system", "content": "You are a music expert and audio engineer who analyzes both standard and advanced audio features. You have deep knowledge of audio signal processing, music production techniques, and sonic characteristics. You can translate technical audio measurements into meaningful musical insights about production style and sonic qualities. Focus on what the advanced features reveal about timbre, texture, dynamics, and frequency content that standard features miss. Always return valid JSON and nothing else."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.6,
-            max_tokens=400,
+            max_tokens=600,
         )
         text = resp.choices[0].message.content.strip()
         # Guard: ensure valid JSON
@@ -1100,7 +1218,7 @@ def generate_llm_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def generate_llm_ratings(audio_summary: Dict[str, Any]) -> Dict[str, str] | None:
-    """Ask the LLM to map numeric features to human labels.
+    """Ask the LLM to map numeric features to human labels, incorporating advanced librosa features.
 
     Returns a dict like {energy: High, danceability: Medium, ...}. If LLM fails or not configured, returns None.
     """
@@ -1109,17 +1227,37 @@ def generate_llm_ratings(audio_summary: Dict[str, Any]) -> Dict[str, str] | None
         return None
     client = OpenAI(api_key=api_key)
     try:
-        payload = {k: audio_summary.get(k) for k in ["danceability","energy","valence","tempo","acousticness","instrumentalness","speechiness","liveness","spectral_centroid_mean","librosa_tempo"]}
+        # Extract standard and librosa features
+        standard_features = {k: audio_summary.get(k) for k in ["danceability","energy","valence","tempo","acousticness","instrumentalness","speechiness","liveness"]}
+        librosa_features = {k: audio_summary.get(k) for k in ["librosa_tempo","spectral_centroid_mean","rms_mean","zcr_mean","flatness_mean","rolloff_mean","onset_mean","dominant_pitch_class"] if audio_summary.get(k) is not None}
+        
+        # Prepare feature explanations
+        feature_explanations = {
+            "librosa_tempo": "Beats per minute detected through signal processing",
+            "spectral_centroid_mean": "Average frequency distribution center (higher = brighter sound)",
+            "rms_mean": "Root mean square energy (loudness)",
+            "zcr_mean": "Zero crossing rate (higher = more percussive/noisy)",
+            "flatness_mean": "Spectral flatness (higher = more noise-like vs. tonal)",
+            "rolloff_mean": "Frequency below which 85% of energy is contained",
+            "onset_mean": "Strength of note onsets/attacks",
+            "dominant_pitch_class": "Most common musical note/key"
+        }
+        
+        # Create explanations for the librosa features
+        librosa_explanations = "\nLibrosa Advanced Features:\n" + "\n".join([f"- {k}: {librosa_features[k]} ({feature_explanations[k]})" for k in librosa_features])
+        
         prompt = (
-            "Given these audio features from Spotify/librosa, assign human-friendly ratings.\n"
+            "Given these audio features from Spotify and librosa, assign human-friendly ratings.\n"
             "Return JSON only with keys: danceability, energy, valence, tempo, acousticness, instrumentalness, speechiness, liveness.\n"
             "Rules: use 'Low'/'Medium'/'High' for all except 'tempo' which must be 'Slow'/'Moderate'/'Fast'.\n"
-            f"Features: {json.dumps(payload, ensure_ascii=False)}"
+            f"Standard Features: {json.dumps(standard_features, ensure_ascii=False)}\n"
+            f"{librosa_explanations}\n\n"
+            "Use both standard and advanced features to make more accurate assessments. For example, high spectral centroid suggests higher energy, high RMS suggests higher loudness/energy, etc."
         )
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
-                {"role": "system", "content": "You are a JSON-only music rater."},
+                {"role": "system", "content": "You are a music expert who analyzes audio features and provides accurate ratings. You understand both standard streaming platform metrics and advanced signal processing measurements from librosa."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.2,
@@ -1139,24 +1277,63 @@ def generate_llm_ratings(audio_summary: Dict[str, Any]) -> Dict[str, str] | None
 
 
 def generate_llm_instruments(genres: List[str], ratings: Dict[str, Any], audio_summary: Dict[str, Any]) -> List[str] | None:
+    """Infer likely instruments in the user's music using genres, ratings, and advanced librosa features.
+    
+    Returns a list of 3-5 instrument names, or None if the LLM fails or is not configured.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or OpenAI is None:
         return None
     client = OpenAI(api_key=api_key)
     try:
+        # Extract librosa-specific features
+        librosa_features = {k: audio_summary.get(k) for k in [
+            "librosa_tempo", "spectral_centroid_mean", "rms_mean", "zcr_mean", 
+            "flatness_mean", "rolloff_mean", "onset_mean", "dominant_pitch_class"
+        ] if audio_summary.get(k) is not None}
+        
+        # Prepare feature explanations and their instrument implications
+        feature_implications = ""
+        if librosa_features:
+            feature_implications = "\nLibrosa Feature Instrument Implications:\n"
+            if "spectral_centroid_mean" in librosa_features:
+                sc = librosa_features["spectral_centroid_mean"]
+                if sc > 3000:
+                    feature_implications += "- High spectral centroid suggests bright instruments like cymbals, violins, flutes\n"
+                elif sc > 1500:
+                    feature_implications += "- Medium spectral centroid suggests balanced instruments like guitars, pianos, saxophones\n"
+                else:
+                    feature_implications += "- Low spectral centroid suggests bass-heavy instruments like bass guitar, tuba, cello\n"
+            
+            if "zcr_mean" in librosa_features:
+                zcr = librosa_features["zcr_mean"]
+                if zcr > 0.1:
+                    feature_implications += "- High zero crossing rate suggests percussive instruments or distorted guitars\n"
+                else:
+                    feature_implications += "- Low zero crossing rate suggests smoother instruments like strings or synth pads\n"
+            
+            if "onset_mean" in librosa_features:
+                onset = librosa_features["onset_mean"]
+                if onset > 0.2:
+                    feature_implications += "- Strong onsets suggest drums, piano, or plucked string instruments\n"
+        
         prompt = (
             "Infer likely instruments present in the user's music from genres, ratings and audio features.\n"
             "Return a JSON array of 3-5 concise instrument names (lowercase).\n"
-            f"Genres: {genres}\nRatings: {ratings}\nFeatures: {json.dumps(audio_summary, ensure_ascii=False)}"
+            f"Genres: {genres}\nRatings: {ratings}\n"
+            f"Standard Features: {json.dumps({k: v for k, v in audio_summary.items() if k not in librosa_features}, ensure_ascii=False)}\n"
+            f"Advanced Features: {json.dumps(librosa_features, ensure_ascii=False)}"
+            f"{feature_implications}"
+            "\n\nUse both genre information and audio characteristics to identify the most likely instruments."
         )
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
-                {"role": "system", "content": "Return only a JSON array of instruments."},
+                {"role": "system", "content": "You are a music expert who can identify instruments from audio characteristics. You understand how spectral features, rhythm patterns, and genre conventions relate to specific instruments."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=120,
+            max_tokens=150,
         )
         arr = json.loads(resp.choices[0].message.content.strip())
         return [str(x).strip().lower() for x in arr if isinstance(x, (str,))][:5]
@@ -1181,12 +1358,50 @@ def fallback_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         ratings[k] = classify(k)
     desc = _describe_personality(ratings, audio_summary, favorite_genre)
     common_instruments = [i for i in ["synthesizer","drums","acoustic guitar","piano"]]
+    
+    # Extract librosa-specific features for the advancedInsights field
+    librosa_features = {k: v for k, v in audio_summary.items() if k in [
+        "librosa_tempo", "spectral_centroid_mean", "rms_mean", "zcr_mean", 
+        "flatness_mean", "rolloff_mean", "onset_mean", "dominant_pitch_class",
+        "spectral_bandwidth_mean", "spectral_contrast_mean", "chroma_stft_mean",
+        "mfcc_mean", "harmonic_mean", "percussive_mean"
+    ] and v is not None}
+    
+    # Create a fallback advanced insights description
+    advanced_insights = "Based on the audio analysis, "
+    if librosa_features.get("spectral_centroid_mean"):
+        sc = librosa_features["spectral_centroid_mean"]
+        if sc > 3000:
+            advanced_insights += "the music has bright, treble-focused production with crisp highs. "
+        elif sc > 1500:
+            advanced_insights += "the music has balanced frequency content with clear mids. "
+        else:
+            advanced_insights += "the music has warm, bass-focused production. "
+    
+    if librosa_features.get("rms_mean") and librosa_features.get("zcr_mean"):
+        rms = librosa_features["rms_mean"]
+        zcr = librosa_features["zcr_mean"]
+        if rms > 0.2 and zcr > 0.1:
+            advanced_insights += "The tracks feature dynamic, textured production with both percussive elements and tonal richness. "
+        elif rms > 0.15:
+            advanced_insights += "The production has good dynamic range with moderate compression. "
+        else:
+            advanced_insights += "The production style is subtle with gentle dynamics and smooth textures. "
+    
+    if librosa_features.get("librosa_tempo"):
+        tempo = librosa_features["librosa_tempo"]
+        advanced_insights += f"The rhythm analysis shows a consistent {tempo:.1f} BPM groove. "
+    
+    if not librosa_features:
+        advanced_insights = "Advanced audio analysis unavailable. Consider analyzing with more audio samples for detailed production insights."
+    
     return {
         "favoriteGenre": favorite_genre or "mixed",
         "topArtist": artists[0] if artists else "various",
         "primaryLanguage": None,
         "commonInstruments": common_instruments,
         "musicalSense": desc,
+        "advancedInsights": advanced_insights,
         "recommendations": {
             "reason": "Based on energy/valence/tempo balance",
             "searchTerms": [favorite_genre or "indie", ratings.get("tempo","Moderate"), "similar artists"]
