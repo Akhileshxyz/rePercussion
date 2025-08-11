@@ -276,24 +276,104 @@ def create_app() -> Flask:
         sp = require_spotify()
         if sp is None:
             return redirect(url_for("index"))
-        # Seed with user's top tracks/artists for simple recs
+
+        # 1) Gather a representative sample of liked songs (up to 200)
+        liked_ids: list[str] = []
+        liked_tracks_meta: list[dict] = []
         try:
-            top_tracks = sp.current_user_top_tracks(limit=5).get("items", [])
-            top_artists = sp.current_user_top_artists(limit=5).get("items", [])
+            limit = 50
+            offset = 0
+            while offset < 200:
+                page = sp.current_user_saved_tracks(limit=limit, offset=offset) or {}
+                items = page.get("items", []) or []
+                if not items:
+                    break
+                for it in items:
+                    tr = (it.get("track") or {})
+                    if tr and tr.get("id"):
+                        liked_ids.append(tr["id"])
+                        liked_tracks_meta.append(tr)
+                offset += limit
+                if offset >= (page.get("total") or offset):
+                    break
         except Exception:
-            top_tracks, top_artists = [], []
-        seed_tracks = [t.get("id") for t in top_tracks[:2] if t.get("id")]
-        seed_artists = [a.get("id") for a in top_artists[:2] if a.get("id")]
+            pass
+
+        # Fallback: if no likes retrieved, use top tracks/artists
+        if not liked_ids:
+            try:
+                top_tracks = sp.current_user_top_tracks(limit=20).get("items", [])
+                liked_ids = [t.get("id") for t in top_tracks if t.get("id")]
+                liked_tracks_meta = top_tracks
+            except Exception:
+                liked_ids, liked_tracks_meta = [], []
+
+        # 2) Compute audio feature averages from likes for targeted recs
+        features: list[dict] = []
+        for start in range(0, len(liked_ids), 100):
+            chunk = liked_ids[start : start + 100]
+            try:
+                features.extend(sp.audio_features(chunk) or [])
+            except Exception:
+                pass
+
+        def _avg(key: str) -> float | None:
+            vals = [f.get(key) for f in features if f and f.get(key) is not None]
+            return round(sum(vals) / len(vals), 3) if vals else None
+
+        targets = {
+            "target_danceability": _avg("danceability"),
+            "target_energy": _avg("energy"),
+            "target_valence": _avg("valence"),
+            "target_tempo": (_avg("tempo") or 115),
+            "target_acousticness": _avg("acousticness"),
+            "target_instrumentalness": _avg("instrumentalness"),
+            "target_speechiness": _avg("speechiness"),
+            "target_liveness": _avg("liveness"),
+        }
+        # Drop None values as Spotify rejects them
+        targets = {k: v for k, v in targets.items() if v is not None}
+
+        # 3) Derive seeds from liked songs: top artists and tracks by popularity
+        from collections import Counter
+        artist_counter: Counter[str] = Counter()
+        seed_tracks: list[str] = []
+        for tr in liked_tracks_meta:
+            for a in tr.get("artists", []) or []:
+                if a.get("id"):
+                    artist_counter[a["id"]] += 1
+        seed_artists = [aid for aid, _ in artist_counter.most_common(3)][:3]
+        # Pick up to 2 highly popular liked tracks as seeds
+        liked_sorted = sorted([t for t in liked_tracks_meta if t.get("id")], key=lambda t: (t.get("popularity") or 0), reverse=True)
+        seed_tracks = [t.get("id") for t in liked_sorted[:2]]
+
+        # Ensure at least one seed exists
+        if not seed_tracks and liked_ids:
+            seed_tracks = liked_ids[:1]
+
+        # 4) Call recommendations, filter out already-liked and dedupe, cap 10
         try:
-            recs = sp.recommendations(seed_tracks=seed_tracks, seed_artists=seed_artists, limit=20)
+            recs = sp.recommendations(
+                seed_tracks=seed_tracks[:2],
+                seed_artists=seed_artists[:3],
+                limit=50,
+                **targets,
+            )
         except Exception:
             recs = {"tracks": []}
-        tracks = []
+
+        seen_ids = set()
+        liked_set = set(liked_ids)
+        unique: list[dict] = []
         for tr in recs.get("tracks", []):
+            tid = tr.get("id")
+            if not tid or tid in liked_set or tid in seen_ids:
+                continue
+            seen_ids.add(tid)
             artists = ", ".join(a.get("name", "") for a in tr.get("artists", []))
             images = (tr.get("album", {}) or {}).get("images", [])
             cover = images[1]["url"] if len(images) > 1 else (images[0]["url"] if images else None)
-            tracks.append(
+            unique.append(
                 {
                     "name": tr.get("name"),
                     "artists": artists,
@@ -303,7 +383,37 @@ def create_app() -> Flask:
                     "external_url": (tr.get("external_urls") or {}).get("spotify"),
                 }
             )
-        return render_template("recommendations.html", tracks=tracks)
+            if len(unique) >= 10:
+                break
+
+        # If underfilled, try a second pass with only artist seeds
+        if len(unique) < 5 and seed_artists:
+            try:
+                recs2 = sp.recommendations(seed_artists=seed_artists[:5], limit=50, **targets)
+            except Exception:
+                recs2 = {"tracks": []}
+            for tr in recs2.get("tracks", []):
+                tid = tr.get("id")
+                if not tid or tid in liked_set or tid in seen_ids:
+                    continue
+                seen_ids.add(tid)
+                artists = ", ".join(a.get("name", "") for a in tr.get("artists", []))
+                images = (tr.get("album", {}) or {}).get("images", [])
+                cover = images[1]["url"] if len(images) > 1 else (images[0]["url"] if images else None)
+                unique.append(
+                    {
+                        "name": tr.get("name"),
+                        "artists": artists,
+                        "album": (tr.get("album", {}) or {}).get("name"),
+                        "cover": cover,
+                        "preview_url": tr.get("preview_url"),
+                        "external_url": (tr.get("external_urls") or {}).get("spotify"),
+                    }
+                )
+                if len(unique) >= 10:
+                    break
+
+        return render_template("recommendations.html", tracks=unique)
 
     @app.route("/api/llm-analyze", methods=["POST"])
     def llm_analyze():
@@ -863,7 +973,7 @@ def analyze_playlist(sp: Spotify, playlist_id: str) -> Dict[str, Any]:
                 _fill_if_missing("danceability", "High")
             elif 85 <= t <= 140:
                 _fill_if_missing("danceability", "Medium")
-            else:
+        else:
                 _fill_if_missing("danceability", "Low")
 
         if ratings.get("valence") is None and spectral_centroids:
@@ -1051,7 +1161,7 @@ def generate_llm_summary(ratings: Dict[str, Any], audio_summary: Dict[str, Any],
     try:
         client = OpenAI(api_key=api_key)
         
-        # Extract librosa-specific features
+        # Extract librosa-specific features with enhanced detail
         librosa_features = {k: audio_summary.get(k) for k in [
             "librosa_tempo", "spectral_centroid_mean", "rms_mean", "zcr_mean", 
             "flatness_mean", "rolloff_mean", "onset_mean", "dominant_pitch_class",
@@ -1059,28 +1169,48 @@ def generate_llm_summary(ratings: Dict[str, Any], audio_summary: Dict[str, Any],
             "mfcc_mean", "harmonic_mean", "percussive_mean"
         ] if audio_summary.get(k) is not None}
         
-        # Prepare feature explanations with more detailed descriptions
+        # Enhanced feature explanations with production implications
         feature_explanations = {
-            "librosa_tempo": "Beats per minute detected through signal processing",
-            "spectral_centroid_mean": "Average frequency distribution center (higher = brighter sound)",
-            "rms_mean": "Root mean square energy (loudness and dynamic range)",
-            "zcr_mean": "Zero crossing rate (higher = more percussive/noisy, lower = more tonal)",
-            "flatness_mean": "Spectral flatness (higher = more noise-like vs. tonal, indicates texture)",
-            "rolloff_mean": "Frequency below which 85% of energy is contained (indicates brightness/darkness)",
-            "onset_mean": "Strength of note onsets/attacks (indicates rhythmic clarity and articulation)",
-            "dominant_pitch_class": "Most common musical note/key (indicates tonal center)",
-            "spectral_bandwidth_mean": "Width of the spectrum (indicates frequency range and richness)",
-            "spectral_contrast_mean": "Contrast between peaks and valleys in spectrum (indicates clarity vs. muddiness)",
-            "chroma_stft_mean": "Distribution of energy across pitch classes (indicates harmonic content)",
-            "mfcc_mean": "Mel-frequency cepstral coefficients (indicates timbre characteristics)",
-            "harmonic_mean": "Energy in harmonic components (indicates melodic content)",
-            "percussive_mean": "Energy in percussive components (indicates rhythmic emphasis)"
+            "librosa_tempo": "Beats per minute detected through signal processing (affects energy perception and groove feel)",
+            "spectral_centroid_mean": "Average frequency distribution center - higher values (>3000) indicate brighter/sharper production with emphasis on high frequencies; lower values (<1500) suggest warmer, bass-focused mixes",
+            "rms_mean": "Root mean square energy - indicates loudness, dynamic range, and compression level; higher values suggest more aggressive mastering",
+            "zcr_mean": "Zero crossing rate - higher values indicate more percussive/noisy content with transient-rich production; lower values suggest smoother, more tonal production",
+            "flatness_mean": "Spectral flatness - higher values indicate noise-like textures (distortion, complex timbres); lower values suggest more tonal/harmonic production",
+            "rolloff_mean": "Frequency below which 85% of energy is contained - indicates brightness/darkness of the mix and high-frequency content",
+            "onset_mean": "Strength of note onsets/attacks - indicates rhythmic clarity, articulation, and transient preservation in production",
+            "dominant_pitch_class": "Most common musical note/key - indicates tonal center and harmonic foundation",
+            "spectral_bandwidth_mean": "Width of the spectrum - indicates frequency range and richness; wider bandwidth suggests fuller production",
+            "spectral_contrast_mean": "Contrast between peaks and valleys in spectrum - higher values indicate clarity and separation in mix; lower values suggest a more blended sound",
+            "chroma_stft_mean": "Distribution of energy across pitch classes - indicates harmonic content and complexity",
+            "mfcc_mean": "Mel-frequency cepstral coefficients - captures timbral characteristics and instrument/vocal qualities",
+            "harmonic_mean": "Energy in harmonic components - indicates melodic content and tonal elements",
+            "percussive_mean": "Energy in percussive components - indicates rhythmic emphasis and beat prominence"
         }
 
-        # Build a comprehensive prompt with ratings and detailed DSP stats
+        # Production style implications based on feature combinations
+        production_implications = []
+        if librosa_features.get("spectral_centroid_mean") and librosa_features.get("rms_mean"):
+            sc = librosa_features["spectral_centroid_mean"]
+            rms = librosa_features["rms_mean"]
+            if sc > 3000 and rms > 0.2:
+                production_implications.append("Bright, loud production with emphasis on clarity and presence")
+            elif sc < 1500 and rms > 0.15:
+                production_implications.append("Warm, bass-heavy production with substantial power")
+            elif sc > 2500 and rms < 0.1:
+                production_implications.append("Bright but dynamic production with preserved transients")
+        
+        if librosa_features.get("zcr_mean") and librosa_features.get("flatness_mean"):
+            zcr = librosa_features["zcr_mean"]
+            flat = librosa_features["flatness_mean"]
+            if zcr > 0.1 and flat > 0.3:
+                production_implications.append("Textured production with complex timbres and noise elements")
+            elif zcr < 0.05 and flat < 0.2:
+                production_implications.append("Smooth, harmonically rich production with minimal distortion")
+        
+        # Build a comprehensive prompt with ratings, detailed DSP stats, and production implications
         lines = [
             "You are a concise, vivid music curator with expertise in audio signal processing and music production.",
-            "Write a 2-3 sentence personalized description of the listener's taste that includes insights about production style and sonic qualities.",
+            "Write a 2-3 sentence personalized description of the listener's taste that includes specific insights about production style and sonic qualities.",
             "Avoid generic platitudes; reference concrete traits, production characteristics, and sonic textures based on the advanced audio features.",
         ]
         if favorite_genre:
@@ -1098,6 +1228,10 @@ def generate_llm_summary(ratings: Dict[str, Any], audio_summary: Dict[str, Any],
                 if k in feature_explanations:
                     librosa_desc += f"- {k}: {v} ({feature_explanations[k]})\n"
             lines.append(librosa_desc)
+        
+        # Include production style implications
+        if production_implications:
+            lines.append(f"Production Style Implications: {', '.join(production_implications)}")
         
         lines.append("Use both standard and advanced features to create a detailed, personalized description that specifically addresses production style (e.g., warm/bright, clean/distorted, sparse/dense) and sonic qualities (e.g., textural elements, frequency balance, dynamic range).")
         lines.append("Return only the description.")
@@ -1142,21 +1276,49 @@ def generate_llm_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     
     # Prepare feature explanations for the prompt with more detailed descriptions
     feature_explanations = {
-        "librosa_tempo": "Beats per minute detected through signal processing",
-        "spectral_centroid_mean": "Average frequency distribution center (higher = brighter sound)",
-        "rms_mean": "Root mean square energy (loudness and dynamic range)",
-        "zcr_mean": "Zero crossing rate (higher = more percussive/noisy, lower = more tonal)",
-        "flatness_mean": "Spectral flatness (higher = more noise-like vs. tonal, indicates texture)",
-        "rolloff_mean": "Frequency below which 85% of energy is contained (indicates brightness/darkness)",
-        "onset_mean": "Strength of note onsets/attacks (indicates rhythmic clarity and articulation)",
-        "dominant_pitch_class": "Most common musical note/key (indicates tonal center)",
-        "spectral_bandwidth_mean": "Width of the spectrum (indicates frequency range and richness)",
-        "spectral_contrast_mean": "Contrast between peaks and valleys in spectrum (indicates clarity vs. muddiness)",
-        "chroma_stft_mean": "Distribution of energy across pitch classes (indicates harmonic content)",
-        "mfcc_mean": "Mel-frequency cepstral coefficients (indicates timbre characteristics)",
-        "harmonic_mean": "Energy in harmonic components (indicates melodic content)",
-        "percussive_mean": "Energy in percussive components (indicates rhythmic emphasis)"
+        "librosa_tempo": "Beats per minute detected through signal processing (affects energy perception and groove feel)",
+        "spectral_centroid_mean": "Average frequency distribution center - higher values (>3000) indicate brighter/sharper production with emphasis on high frequencies; lower values (<1500) suggest warmer, bass-focused mixes",
+        "rms_mean": "Root mean square energy - indicates loudness, dynamic range, and compression level; higher values suggest more aggressive mastering",
+        "zcr_mean": "Zero crossing rate - higher values indicate more percussive/noisy content with transient-rich production; lower values suggest smoother, more tonal production",
+        "flatness_mean": "Spectral flatness - higher values indicate noise-like textures (distortion, complex timbres); lower values suggest more tonal/harmonic production",
+        "rolloff_mean": "Frequency below which 85% of energy is contained - indicates brightness/darkness of the mix and high-frequency content",
+        "onset_mean": "Strength of note onsets/attacks - indicates rhythmic clarity, articulation, and transient preservation in production",
+        "dominant_pitch_class": "Most common musical note/key - indicates tonal center and harmonic foundation",
+        "spectral_bandwidth_mean": "Width of the spectrum - indicates frequency range and richness; wider bandwidth suggests fuller production",
+        "spectral_contrast_mean": "Contrast between peaks and valleys in spectrum - higher values indicate clarity and separation in mix; lower values suggest a more blended sound",
+        "chroma_stft_mean": "Distribution of energy across pitch classes - indicates harmonic content and complexity",
+        "mfcc_mean": "Mel-frequency cepstral coefficients - captures timbral characteristics and instrument/vocal qualities",
+        "harmonic_mean": "Energy in harmonic components - indicates melodic content and tonal elements",
+        "percussive_mean": "Energy in percussive components - indicates rhythmic emphasis and beat prominence"
     }
+    
+    # Production style implications based on feature combinations
+    production_implications = []
+    if librosa_features.get("spectral_centroid_mean") and librosa_features.get("rms_mean"):
+        sc = librosa_features["spectral_centroid_mean"]
+        rms = librosa_features["rms_mean"]
+        if sc > 3000 and rms > 0.2:
+            production_implications.append("Bright, loud production with emphasis on clarity and presence")
+        elif sc < 1500 and rms > 0.15:
+            production_implications.append("Warm, bass-heavy production with substantial power")
+        elif sc > 2500 and rms < 0.1:
+            production_implications.append("Bright but dynamic production with preserved transients")
+    
+    if librosa_features.get("zcr_mean") and librosa_features.get("flatness_mean"):
+        zcr = librosa_features["zcr_mean"]
+        flat = librosa_features["flatness_mean"]
+        if zcr > 0.1 and flat > 0.3:
+            production_implications.append("Textured production with complex timbres and noise elements")
+        elif zcr < 0.05 and flat < 0.2:
+            production_implications.append("Smooth, harmonically rich production with minimal distortion")
+    
+    if librosa_features.get("spectral_bandwidth_mean") and librosa_features.get("spectral_contrast_mean"):
+        bw = librosa_features["spectral_bandwidth_mean"]
+        contrast = librosa_features["spectral_contrast_mean"]
+        if bw > 2000 and contrast > 0.5:
+            production_implications.append("Wide frequency spectrum with clear separation between elements")
+        elif bw < 1500 and contrast < 0.3:
+            production_implications.append("Focused frequency range with blended, cohesive mix")
     
     # Create detailed feature descriptions for the prompt
     librosa_descriptions = []
@@ -1180,6 +1342,7 @@ def generate_llm_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         "- Dynamic features (RMS, onset strength) for compression, punch, and articulation\n"
         "- Textural features (flatness, ZCR) for tonal vs. noise content and production texture\n"
         "- Harmonic features (chroma, pitch class) for key relationships and harmonic complexity\n\n"
+        f"Production Style Implications Based on Feature Combinations:\n{', '.join(production_implications) if production_implications else 'No specific production style implications detected'}\n\n"
         "Please provide analysis in this exact JSON format:\n"
         "{\n"
         "  \"favoriteGenre\": \"Primary genre with explanation\",\n"
@@ -1199,7 +1362,7 @@ def generate_llm_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
-                {"role": "system", "content": "You are a music expert and audio engineer who analyzes both standard and advanced audio features. You have deep knowledge of audio signal processing, music production techniques, and sonic characteristics. You can translate technical audio measurements into meaningful musical insights about production style and sonic qualities. Focus on what the advanced features reveal about timbre, texture, dynamics, and frequency content that standard features miss. Always return valid JSON and nothing else."},
+                {"role": "system", "content": "You are a music expert and audio engineer who analyzes both standard and advanced audio features. You have deep knowledge of audio signal processing, music production techniques, and sonic characteristics. You can translate technical audio measurements into meaningful musical insights about production style and sonic qualities. Focus on what the advanced features reveal about timbre, texture, dynamics, and frequency content that standard features miss. Pay special attention to production style implications derived from combinations of features. Always return valid JSON and nothing else."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.6,
@@ -1231,16 +1394,16 @@ def generate_llm_ratings(audio_summary: Dict[str, Any]) -> Dict[str, str] | None
         standard_features = {k: audio_summary.get(k) for k in ["danceability","energy","valence","tempo","acousticness","instrumentalness","speechiness","liveness"]}
         librosa_features = {k: audio_summary.get(k) for k in ["librosa_tempo","spectral_centroid_mean","rms_mean","zcr_mean","flatness_mean","rolloff_mean","onset_mean","dominant_pitch_class"] if audio_summary.get(k) is not None}
         
-        # Prepare feature explanations
+        # Prepare feature explanations with more detailed descriptions
         feature_explanations = {
-            "librosa_tempo": "Beats per minute detected through signal processing",
-            "spectral_centroid_mean": "Average frequency distribution center (higher = brighter sound)",
-            "rms_mean": "Root mean square energy (loudness)",
-            "zcr_mean": "Zero crossing rate (higher = more percussive/noisy)",
-            "flatness_mean": "Spectral flatness (higher = more noise-like vs. tonal)",
-            "rolloff_mean": "Frequency below which 85% of energy is contained",
-            "onset_mean": "Strength of note onsets/attacks",
-            "dominant_pitch_class": "Most common musical note/key"
+            "librosa_tempo": "Beats per minute detected through signal processing (affects energy perception and groove feel)",
+            "spectral_centroid_mean": "Average frequency distribution center - higher values (>3000) indicate brighter/sharper production with emphasis on high frequencies; lower values (<1500) suggest warmer, bass-focused mixes",
+            "rms_mean": "Root mean square energy - indicates loudness, dynamic range, and compression level; higher values suggest more aggressive mastering",
+            "zcr_mean": "Zero crossing rate - higher values indicate more percussive/noisy content with transient-rich production; lower values suggest smoother, more tonal production",
+            "flatness_mean": "Spectral flatness - higher values indicate noise-like textures (distortion, complex timbres); lower values suggest more tonal/harmonic production",
+            "rolloff_mean": "Frequency below which 85% of energy is contained - indicates brightness/darkness of the mix and high-frequency content",
+            "onset_mean": "Strength of note onsets/attacks - indicates rhythmic clarity, articulation, and transient preservation in production",
+            "dominant_pitch_class": "Most common musical note/key - indicates tonal center and harmonic foundation"
         }
         
         # Create explanations for the librosa features
@@ -1299,23 +1462,39 @@ def generate_llm_instruments(genres: List[str], ratings: Dict[str, Any], audio_s
             if "spectral_centroid_mean" in librosa_features:
                 sc = librosa_features["spectral_centroid_mean"]
                 if sc > 3000:
-                    feature_implications += "- High spectral centroid suggests bright instruments like cymbals, violins, flutes\n"
+                    feature_implications += "- High spectral centroid (>3000) suggests bright instruments like cymbals, violins, flutes, trumpets, and high-pitched synthesizers\n"
                 elif sc > 1500:
-                    feature_implications += "- Medium spectral centroid suggests balanced instruments like guitars, pianos, saxophones\n"
+                    feature_implications += "- Medium spectral centroid (1500-3000) suggests balanced instruments like guitars, pianos, saxophones, and mid-range synthesizers\n"
                 else:
-                    feature_implications += "- Low spectral centroid suggests bass-heavy instruments like bass guitar, tuba, cello\n"
+                    feature_implications += "- Low spectral centroid (<1500) suggests bass-heavy instruments like bass guitar, tuba, cello, baritone saxophone, and sub-bass synthesizers\n"
             
             if "zcr_mean" in librosa_features:
                 zcr = librosa_features["zcr_mean"]
                 if zcr > 0.1:
-                    feature_implications += "- High zero crossing rate suggests percussive instruments or distorted guitars\n"
+                    feature_implications += "- High zero crossing rate (>0.1) suggests percussive instruments (drums, hi-hats), distorted guitars, or instruments with significant noise components\n"
                 else:
-                    feature_implications += "- Low zero crossing rate suggests smoother instruments like strings or synth pads\n"
+                    feature_implications += "- Low zero crossing rate (<0.1) suggests smoother instruments like strings, synth pads, organs, or clean electric guitars\n"
             
             if "onset_mean" in librosa_features:
                 onset = librosa_features["onset_mean"]
                 if onset > 0.2:
-                    feature_implications += "- Strong onsets suggest drums, piano, or plucked string instruments\n"
+                    feature_implications += "- Strong onsets (>0.2) suggest drums, piano, plucked string instruments (guitar, harp), or staccato playing techniques\n"
+                else:
+                    feature_implications += "- Weaker onsets (<0.2) suggest sustained instruments like strings, pads, ambient synthesizers, or legato playing techniques\n"
+            
+            if "flatness_mean" in librosa_features:
+                flat = librosa_features["flatness_mean"]
+                if flat > 0.3:
+                    feature_implications += "- High spectral flatness (>0.3) suggests noise-based instruments like drums, percussion, distorted guitars, or experimental electronic sounds\n"
+                else:
+                    feature_implications += "- Low spectral flatness (<0.3) suggests harmonic instruments like piano, clean guitars, orchestral instruments, or tonal synthesizers\n"
+            
+            if "rms_mean" in librosa_features:
+                rms = librosa_features["rms_mean"]
+                if rms > 0.2:
+                    feature_implications += "- High RMS energy (>0.2) suggests loud instruments like drums, brass, distorted guitars, or heavily compressed electronic instruments\n"
+                else:
+                    feature_implications += "- Lower RMS energy (<0.2) suggests softer instruments like acoustic guitar, piano, strings, or ambient synthesizers\n"
         
         prompt = (
             "Infer likely instruments present in the user's music from genres, ratings and audio features.\n"
@@ -1329,7 +1508,7 @@ def generate_llm_instruments(genres: List[str], ratings: Dict[str, Any], audio_s
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
-                {"role": "system", "content": "You are a music expert who can identify instruments from audio characteristics. You understand how spectral features, rhythm patterns, and genre conventions relate to specific instruments."},
+                {"role": "system", "content": "You are a music expert who can identify instruments from audio characteristics. You understand how spectral features, rhythm patterns, and genre conventions relate to specific instruments. Pay special attention to the detailed librosa feature implications provided, as they offer valuable insights into the sonic characteristics that suggest specific instrument types. Consider how combinations of features (spectral centroid, zero crossing rate, flatness, RMS, onset strength) can reveal the presence of particular instrument families and specific instruments."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
@@ -1367,30 +1546,57 @@ def fallback_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         "mfcc_mean", "harmonic_mean", "percussive_mean"
     ] and v is not None}
     
-    # Create a fallback advanced insights description
+    # Create a fallback advanced insights description with detailed production style analysis
     advanced_insights = "Based on the audio analysis, "
+    
+    # Frequency balance and tonal character based on spectral centroid
     if librosa_features.get("spectral_centroid_mean"):
         sc = librosa_features["spectral_centroid_mean"]
         if sc > 3000:
-            advanced_insights += "the music has bright, treble-focused production with crisp highs. "
+            advanced_insights += "the music has bright, treble-focused production with crisp highs and emphasis on clarity and presence. "
         elif sc > 1500:
-            advanced_insights += "the music has balanced frequency content with clear mids. "
+            advanced_insights += "the music has balanced frequency content with well-defined mids and natural tonal balance. "
         else:
-            advanced_insights += "the music has warm, bass-focused production. "
+            advanced_insights += "the music has warm, bass-focused production with rich low-end and subdued high frequencies. "
     
+    # Dynamic range and texture based on RMS and ZCR
     if librosa_features.get("rms_mean") and librosa_features.get("zcr_mean"):
         rms = librosa_features["rms_mean"]
         zcr = librosa_features["zcr_mean"]
         if rms > 0.2 and zcr > 0.1:
-            advanced_insights += "The tracks feature dynamic, textured production with both percussive elements and tonal richness. "
-        elif rms > 0.15:
-            advanced_insights += "The production has good dynamic range with moderate compression. "
-        else:
-            advanced_insights += "The production style is subtle with gentle dynamics and smooth textures. "
+            advanced_insights += "The tracks feature dynamic, textured production with both percussive elements and tonal richness, suggesting detailed mixing with attention to transient preservation. "
+        elif rms > 0.15 and zcr > 0.08:
+            advanced_insights += "The production has good dynamic range with moderate compression and a balance of smooth and textured elements. "
+        elif rms > 0.2 and zcr < 0.08:
+            advanced_insights += "The production is loud and dense with heavy compression but maintains tonal smoothness, suggesting modern mastering techniques. "
+        elif rms < 0.15 and zcr < 0.08:
+            advanced_insights += "The production style is subtle with gentle dynamics, smooth textures, and likely minimal processing for a natural sound. "
     
-    if librosa_features.get("librosa_tempo"):
+    # Spectral characteristics based on flatness and bandwidth
+    if librosa_features.get("flatness_mean") and librosa_features.get("spectral_bandwidth_mean"):
+        flat = librosa_features["flatness_mean"]
+        bw = librosa_features["spectral_bandwidth_mean"]
+        if flat > 0.3 and bw > 2000:
+            advanced_insights += "The sonic palette includes complex textures and wide frequency content, suggesting layered production with diverse sound sources. "
+        elif flat < 0.2 and bw > 2000:
+            advanced_insights += "The production features clear harmonic content across a wide frequency range, indicating well-balanced mixing with attention to both clarity and fullness. "
+        elif flat < 0.2 and bw < 1500:
+            advanced_insights += "The production focuses on tonal purity within a controlled frequency range, suggesting intentional filtering and focused arrangement. "
+    
+    # Rhythmic characteristics based on tempo and onset strength
+    if librosa_features.get("librosa_tempo") and librosa_features.get("onset_mean"):
         tempo = librosa_features["librosa_tempo"]
-        advanced_insights += f"The rhythm analysis shows a consistent {tempo:.1f} BPM groove. "
+        onset = librosa_features["onset_mean"]
+        if tempo > 120 and onset > 0.2:
+            advanced_insights += f"The rhythm analysis shows an energetic {tempo:.1f} BPM groove with pronounced attacks, suggesting tight rhythmic production with emphasis on percussive elements. "
+        elif tempo > 120 and onset < 0.2:
+            advanced_insights += f"The rhythm flows at {tempo:.1f} BPM with smooth transitions between notes, creating a fluid but driving feel. "
+        elif tempo < 100 and onset > 0.2:
+            advanced_insights += f"The slower {tempo:.1f} BPM tempo is punctuated by distinct note attacks, creating a deliberate, impactful rhythmic character. "
+        elif tempo < 100 and onset < 0.2:
+            advanced_insights += f"The relaxed {tempo:.1f} BPM tempo pairs with gentle note transitions, creating an atmospheric, flowing rhythmic foundation. "
+        else:
+            advanced_insights += f"The rhythm analysis shows a balanced {tempo:.1f} BPM groove with moderate articulation. "
     
     if not librosa_features:
         advanced_insights = "Advanced audio analysis unavailable. Consider analyzing with more audio samples for detailed production insights."

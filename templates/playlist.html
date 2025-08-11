@@ -41,6 +41,12 @@
         <p><strong>Common Instruments:</strong> {{ (profile.common_instruments or []) | join(', ') }}</p>
         <p><strong>Personality:</strong> {{ profile.llm_summary or profile.musical_sense }}</p>
       </div>
+      {% if profile.advancedInsights %}
+      <h3>Advanced Audio Insights</h3>
+      <div class="card">
+        <p>{{ profile.advancedInsights }}</p>
+      </div>
+      {% endif %}
     {% endif %}
   {% endif %}
 {% endblock %}

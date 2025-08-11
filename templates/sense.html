@@ -7,6 +7,12 @@
     <p><strong>Primary Language:</strong> {{ profile.primary_language or 'N/A' }}</p>
     <p><strong>Common Instruments:</strong> {{ (profile.common_instruments or []) | join(', ') }}</p>
   </div>
+  {% if profile.advancedInsights %}
+  <h3>Advanced Audio Insights</h3>
+  <div class="card">
+    <p>{{ profile.advancedInsights }}</p>
+  </div>
+  {% endif %}
   {% if personalized_analysis %}
   <h3>Your Personalized Analysis</h3>
   <div class="card">
