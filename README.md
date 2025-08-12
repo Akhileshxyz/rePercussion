@@ -1,6 +1,18 @@
 rePercussion
 ============
+rePercussion — concise overview
+A Flask web app that connects to Spotify to analyze your music taste and deliver personalized insights and recommendations.
+Data sources: Spotify OAuth (liked songs, top tracks/artists, audio features).
+Audio analysis: librosa enriches features (tempo, spectral traits) for smarter ratings.
+AI summaries (optional): GPT crafts engaging, personalized descriptions and can refine ratings/instrument inference.
+Key pages:
+/liked-songs: Your saved tracks.
+/playlist: Paste a playlist URL/ID for averages, ratings, instruments, and a summary.
+/sense: Overall taste profile from your top tracks.
+/recommendations: 5–10 unique, non-duplicate song recs tailored to your likes.
+APIs (optional): POST /api/llm-summary and POST /api/llm-analyze for programmatic summaries and JSON analyses.
 
+============
 Local setup (Windows/PowerShell)
 - Install Python 3.11 (x64). Ensure `py -3.11 --version` works.
 
