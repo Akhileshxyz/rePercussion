@@ -1,76 +1,68 @@
-rePercussion
-============
-rePercussion — concise overview
-A Flask web app that connects to Spotify to analyze your music taste and deliver personalized insights and recommendations.
-Data sources: Spotify OAuth (liked songs, top tracks/artists, audio features).
-Audio analysis: librosa enriches features (tempo, spectral traits) for smarter ratings.
-AI summaries (optional): GPT crafts engaging, personalized descriptions and can refine ratings/instrument inference.
-Key pages:
-/liked-songs: Your saved tracks.
-/playlist: Paste a playlist URL/ID for averages, ratings, instruments, and a summary.
-/sense: Overall taste profile from your top tracks.
-/recommendations: 5–10 unique, non-duplicate song recs tailored to your likes.
-APIs (optional): POST /api/llm-summary and POST /api/llm-analyze for programmatic summaries and JSON analyses.
+# rePercussion
 
-============
-Local setup (Windows/PowerShell)
-- Install Python 3.11 (x64). Ensure `py -3.11 --version` works.
+## Brief Explanation
 
-1) Create and activate a virtual env
+rePercussion is a Flask web app that connects to Spotify to analyze your music taste and deliver personalized insights and recommendations.
+
+-   **Data sources**: Spotify OAuth (liked songs, top tracks/artists, audio features).
+-   **Audio analysis**: `librosa` enriches features (tempo, spectral traits) for smarter ratings.
+-   **AI summaries (optional)**: GPT crafts engaging, personalized descriptions and can refine ratings/instrument inference.
+
+### Key Pages
+
+-   `/liked-songs`: Your saved tracks.
+-   `/playlist`: Paste a playlist URL/ID for averages, ratings, instruments, and a summary.
+-   `/sense`: Overall taste profile from your top tracks.
+-   `/recommendations`: 5–10 unique, non-duplicate song recs tailored to your likes.
+
+---
+
+## How to Run
+
+### Prerequisites
+
+-   Python 3.11 or later
+-   A Spotify Developer account and API credentials
+
+### 1. Set Up Environment
+
+First, clone the repository and create a virtual environment:
+
+```bash
+git clone <repository-url>
+cd <repository-name>
+python -m venv .venv
+source .venv/bin/activate  # On Windows, use `.venv\Scripts\activate`
 ```
-py -3.11 -m venv .venv
-.\.venv\Scripts\python -m pip install -U pip setuptools wheel
-```
 
-2) Create `.env` in project root
+### 2. Configure Credentials
+
+Create a `.env` file in the project root and add your Spotify API credentials. You can also add an optional OpenAI key for AI-powered summaries.
+
 ```
 SPOTIPY_CLIENT_ID="<your_spotify_client_id>"
 SPOTIPY_CLIENT_SECRET="<your_spotify_client_secret>"
-SPOTIPY_REDIRECT_URI="http://127.0.0.1:5000/callback"   # or your ngrok https URL + /callback
-FRONTEND_URL=""                                         # optional
-OPENAI_API_KEY="<optional_openai_key>"                  # optional for GPT summaries
-OPENAI_MODEL="gpt-4o-mini"                              # optional
-```
-Add the same redirect URL in the Spotify Developer Dashboard.
-
-3) Install dependencies
-```
-.\.venv\Scripts\pip install -r requirements.txt
+SPOTIPY_REDIRECT_URI="http://127.0.0.1:5000/callback"
+OPENAI_API_KEY="<optional_openai_key>"
+OPENAI_MODEL="gpt-4o-mini"
 ```
 
-4) Run the server
-- Dev (Flask):
-```
-.\.venv\Scripts\python -m flask --app app.flask_app run --debug
-```
-- Production-style (Waitress):
-```
-.\.venv\Scripts\waitress-serve --host=0.0.0.0 --port=5000 wsgi:app
+> **Note**: You must add your `SPOTIPY_REDIRECT_URI` to the settings on your Spotify Developer Dashboard.
+
+### 3. Install Dependencies
+
+Install the required Python packages using pip:
+
+```bash
+pip install -r requirements.txt
 ```
 
-5) (Optional) ngrok tunnel
-```
-ngrok http 5000 --domain=<your-ngrok-subdomain>.ngrok-free.app
-```
-Update `SPOTIPY_REDIRECT_URI` to `https://<your-ngrok-subdomain>.ngrok-free.app/callback` and add it to Spotify Dashboard.
+### 4. Run the Application
 
-6) Use the app
-- Visit `http://127.0.0.1:5000`
-- `/liked-songs` – your saved tracks
-- `/playlist` – paste a playlist URL/ID for analysis and a personalized summary
-- `/sense` – analysis from your top tracks (librosa + optional GPT)
-- `/recommendations` – 5–10 unique recs based on your Liked Songs
+You can run the app using the built-in Flask development server:
 
-7) Optional LLM endpoints
-- POST `/api/llm-summary` with `{ ratings, audio_summary, favorite_genre }` → short GPT summary
-- POST `/api/llm-analyze` with `{ tracks, audio_summary, genres, artists }` → structured JSON analysis
-
-Heroku (optional)
-```
-heroku create <your-app-name>
-heroku config:set SPOTIPY_CLIENT_ID=... SPOTIPY_CLIENT_SECRET=... \
-  SPOTIPY_REDIRECT_URI="https://<your-app-name>.herokuapp.com/callback" \
-  FRONTEND_URL="" OPENAI_API_KEY="..." OPENAI_MODEL="gpt-4o-mini"
-git push heroku main
+```bash
+flask --app app.flask_app run --debug
 ```
 
+The application will be available at `http://127.0.0.1:5000`.
